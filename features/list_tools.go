@@ -11,6 +11,9 @@ import (
 )
 
 func (s ServerFeatures) ListTools(ctx context.Context) ([]*mcp.Tool, error) {
+	if s.Session == nil {
+		return nil, ErrNoSession
+	}
 	params := &mcp.ListToolsParams{}
 	var tools []*mcp.Tool
 	for {

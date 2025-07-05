@@ -11,6 +11,9 @@ import (
 )
 
 func (s ServerFeatures) ListPrompts(ctx context.Context) ([]*mcp.Prompt, error) {
+	if s.Session == nil {
+		return nil, ErrNoSession
+	}
 	params := &mcp.ListPromptsParams{}
 	var prompts []*mcp.Prompt
 	for {

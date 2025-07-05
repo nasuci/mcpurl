@@ -3,6 +3,7 @@ package interactor
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/cherrydra/mcpurl/features"
 	"github.com/cherrydra/mcpurl/parser"
+	"github.com/cherrydra/mcpurl/transport"
 	"github.com/cherrydra/mcpurl/version"
 	"github.com/chzyer/readline"
 	"github.com/google/shlex"
@@ -28,12 +30,15 @@ var (
 
 type Interactor struct {
 	Session *mcp.ClientSession
+
+	completer *mcpurlCompleter
 }
 
-func (i Interactor) Run(ctx context.Context) error {
+func (i *Interactor) Run(ctx context.Context) error {
+	i.completer = &mcpurlCompleter{ctx: ctx, s: &features.ServerFeatures{Session: i.Session}}
 	l, err := readline.NewEx(&readline.Config{
 		Prompt:          "\033[36mmcpurl>\033[0m ",
-		AutoComplete:    &mcpurlCompleter{ctx: ctx, s: &features.ServerFeatures{Session: i.Session}},
+		AutoComplete:    i.completer,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "exit",
 
@@ -63,13 +68,16 @@ func (i Interactor) Run(ctx context.Context) error {
 				printUsage()
 				continue
 			}
-			fmt.Println(err.Error())
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
 		}
+	}
+	if i.Session != nil {
+		i.Session.Close()
 	}
 	return nil
 }
 
-func (ia Interactor) executeCommand(ctx context.Context, command string) (err error) {
+func (ia *Interactor) executeCommand(ctx context.Context, command string) (err error) {
 	// io redirect
 	redirAppendParts := strings.Split(command, ">>")
 	redirCreateParts := strings.Split(redirAppendParts[0], ">")
@@ -147,7 +155,7 @@ func (ia Interactor) executeCommand(ctx context.Context, command string) (err er
 	}
 }
 
-func (i Interactor) executeMain(ctx context.Context, command string, out *os.File) error {
+func (i *Interactor) executeMain(ctx context.Context, command string, out *os.File) error {
 	args, err := shlex.Split(command)
 	if err != nil {
 		return fmt.Errorf("split command: %w", err)
@@ -161,6 +169,12 @@ func (i Interactor) executeMain(ctx context.Context, command string, out *os.Fil
 		f.Out = out
 	}
 	switch args[0] {
+	case "c", "connect":
+		return i.connect(ctx, args, out)
+	case "disconnect":
+		return i.disconnect(ctx, out)
+	case "s", "status":
+		return i.showStatus(out)
 	case "T", "tools":
 		return f.PrintTools(ctx)
 	case "P", "prompts":
@@ -198,7 +212,7 @@ func (i Interactor) executeMain(ctx context.Context, command string, out *os.Fil
 	}
 }
 
-func (i Interactor) executePipe(ctx context.Context, pipePart string, in *os.File, out *os.File) error {
+func (i *Interactor) executePipe(ctx context.Context, pipePart string, in *os.File, out *os.File) error {
 	defer in.Close()
 	if out.Fd() != os.Stdout.Fd() {
 		defer out.Close()
@@ -217,7 +231,7 @@ func (i Interactor) executePipe(ctx context.Context, pipePart string, in *os.Fil
 	return command.Run()
 }
 
-func (i Interactor) chdir(args []string) error {
+func (i *Interactor) chdir(args []string) error {
 	dir := "."
 	if len(args) > 1 {
 		dir = args[1]
@@ -225,7 +239,7 @@ func (i Interactor) chdir(args []string) error {
 	return os.Chdir(dir)
 }
 
-func (i Interactor) listDir(out *os.File, args []string) error {
+func (i *Interactor) listDir(out *os.File, args []string) error {
 	dir := "."
 	for _, arg := range args[1:] {
 		if !strings.HasPrefix(arg, "-") {
@@ -247,7 +261,7 @@ func (i Interactor) listDir(out *os.File, args []string) error {
 	return nil
 }
 
-func (i Interactor) printPwd(out *os.File) error {
+func (i *Interactor) printPwd(out *os.File) error {
 	dir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get current directory: %w", err)
@@ -271,7 +285,7 @@ func (i *Interactor) readFile(out *os.File, args []string) error {
 	return nil
 }
 
-func (i Interactor) callTool(ctx context.Context, f features.ServerFeatures, args []string) error {
+func (i *Interactor) callTool(ctx context.Context, f features.ServerFeatures, args []string) error {
 	if len(args) < 2 {
 		return parser.ErrInvalidUsage
 	}
@@ -360,15 +374,68 @@ func (i *Interactor) getPrompt(ctx context.Context, f features.ServerFeatures, a
 	return f.GetPrompt1(ctx, args[1], params)
 }
 
-func (i Interactor) readResource(ctx context.Context, f features.ServerFeatures, args []string) error {
+func (i *Interactor) readResource(ctx context.Context, f features.ServerFeatures, args []string) error {
 	if len(args) < 2 {
 		return parser.ErrInvalidUsage
 	}
 	return f.ReadResource(ctx, args[1])
 }
 
+func (i *Interactor) connect(ctx context.Context, args []string, out *os.File) error {
+	if len(args) < 2 {
+		return parser.ErrInvalidUsage
+	}
+
+	parsed := parser.Parser{}
+	if err := parsed.Parse(args[1:]); err != nil {
+		return fmt.Errorf("parse transport args: %w", err)
+	}
+	parsed.Silent = true
+	clientTransport, err := transport.Transport(parsed)
+	if err != nil {
+		return fmt.Errorf("transport: %w", err)
+	}
+	client := mcp.NewClient("mcpcurl", version.Short(), nil)
+	session, err := client.Connect(ctx, clientTransport)
+	if err != nil {
+		return fmt.Errorf("connect mcp server: %w", err)
+	}
+	if i.Session != nil {
+		i.Session.Close()
+	}
+	i.Session = session
+	i.completer.s.Session = session
+	return i.showStatus(out)
+}
+
+func (i *Interactor) disconnect(_ context.Context, out *os.File) error {
+	if i.Session == nil {
+		return nil
+	}
+	i.Session.Close()
+	i.Session = nil
+	return i.showStatus(out)
+}
+
+func (i *Interactor) showStatus(out *os.File) error {
+	status := features.ErrNoSession.Error()
+	if i.Session != nil {
+		sessionID := i.Session.ID()
+		if sessionID != "" {
+			status = fmt.Sprintf("Connected (%s)", sessionID)
+		} else {
+			status = "connected"
+		}
+	}
+	json.NewEncoder(out).Encode(map[string]string{"status": status})
+	return nil
+}
+
 func printUsage() {
 	fmt.Println(`Usage:
+  connect <mcp_server>    Connect to mcp server
+  disconnect              Disconnect from mcp server
+  status                  Show connection status
   tools                   List tools
   prompts                 List prompts
   resources               List resources

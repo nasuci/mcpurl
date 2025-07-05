@@ -21,6 +21,9 @@ func (s *ServerFeatures) GetPrompt(ctx context.Context, prompt, data string) err
 }
 
 func (s *ServerFeatures) GetPrompt1(ctx context.Context, prompt string, params map[string]string) error {
+	if s.Session == nil {
+		return ErrNoSession
+	}
 	result, err := s.Session.GetPrompt(ctx, &mcp.GetPromptParams{
 		Name:      prompt,
 		Arguments: params,

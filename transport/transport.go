@@ -2,6 +2,7 @@ package transport
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,8 +13,15 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+var (
+	ErrNoTransport = errors.New("no transport specified")
+)
+
 func Transport(parsed parser.Parser) (mcp.Transport, error) {
 	transportArgs := parsed.TransportArgs()
+	if len(transportArgs) == 0 {
+		return nil, ErrNoTransport
+	}
 	transportURL, err := url.Parse(transportArgs[0])
 	if err != nil {
 		return nil, fmt.Errorf("parse transport url: %w", err)

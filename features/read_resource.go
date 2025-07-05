@@ -11,6 +11,9 @@ import (
 )
 
 func (s *ServerFeatures) ReadResource(ctx context.Context, resource string) error {
+	if s.Session == nil {
+		return ErrNoSession
+	}
 	result, err := s.Session.ReadResource(ctx, &mcp.ReadResourceParams{
 		URI: resource,
 	})

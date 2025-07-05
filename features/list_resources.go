@@ -11,6 +11,9 @@ import (
 )
 
 func (s ServerFeatures) ListResources(ctx context.Context) ([]*mcp.Resource, error) {
+	if s.Session == nil {
+		return nil, ErrNoSession
+	}
 	params := &mcp.ListResourcesParams{}
 	var resources []*mcp.Resource
 	for {

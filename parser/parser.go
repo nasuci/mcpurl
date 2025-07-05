@@ -91,9 +91,6 @@ func (p *Parser) Parse(args []string) error {
 			}
 		}
 	}
-	if len(p.transportArgs) == 0 {
-		return ErrInvalidUsage
-	}
 	return nil
 }
 

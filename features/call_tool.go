@@ -21,6 +21,9 @@ func (s *ServerFeatures) CallTool(ctx context.Context, tool, data string) error 
 }
 
 func (s *ServerFeatures) CallTool1(ctx context.Context, tool string, params map[string]any) error {
+	if s.Session == nil {
+		return ErrNoSession
+	}
 	result, err := s.Session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      tool,
 		Arguments: params,
